@@ -1,0 +1,1 @@
+require("./app")("https://github.com/Sharkbyteprojects/Discord-Sharkbyte-Arak-Bot/raw/master/LICENSE", true).then(console.log, console.error);

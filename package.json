@@ -1,0 +1,17 @@
+{
+  "name": "insta-metadata-app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "express": "^5.2.1",
+    "instagram-url-direct": "^2.0.7",
+    "youtube-meta-data": "^0.1.6"
+  }
+}
