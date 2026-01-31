@@ -7,6 +7,15 @@ const PORT = 3000;
 
 app.use(express.json());
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        message: 'Server is running',
+        timestamp: new Date().toISOString()
+    });
+});
+
 // Validation functions
 function isInstagramReel(url) {
     return url.includes('/reel/');
