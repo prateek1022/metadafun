@@ -256,7 +256,7 @@ app.post('/metadata', async (req, res) => {
             return res.json(unifiedResponse);
         }
 
-        // Check if it's a YouTube Short
+        // Cgfheck if it's a YouTube Short
         if (isYouTubeShort(url)) {
             console.log('Detected YouTube Short');
 
