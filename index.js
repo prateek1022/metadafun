@@ -1,8 +1,10 @@
 const express = require('express');
 const { instagramGetUrl } = require('instagram-url-direct');
-const youtubeMeta = require('youtube-meta-data');
+const ytdl = require('@distube/ytdl-core');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = 3000;
@@ -25,6 +27,29 @@ function isInstagramReel(url) {
 
 function isYouTubeShort(url) {
     return url.includes('/shorts/');
+}
+
+// Cleanup function to remove ytdl-core debug files
+async function cleanupPlayerScripts() {
+    // Small delay to ensure files are fully written
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    try {
+        const files = fs.readdirSync(__dirname);
+        const playerScripts = files.filter(file => file.includes('player-script.js'));
+
+        playerScripts.forEach(file => {
+            try {
+                const filePath = path.join(__dirname, file);
+                fs.unlinkSync(filePath);
+                console.log(`Cleaned up debug file: ${file}`);
+            } catch (err) {
+                // File might be locked, skip it
+            }
+        });
+    } catch (error) {
+        // Silent fail - cleanup is not critical
+    }
 }
 
 // Transform Instagram response to unified format
@@ -56,13 +81,17 @@ function transformInstagramResponse(result, originalUrl) {
         }
     }
 
+    // Generate title from username
+    const username = postInfo.owner_username || null;
+    const title = username ? `Reel by ${username}` : "Instagram Reel";
+
     return {
         success: true,
         data: {
             platform: "instagram",
-            title: null,  // Instagram doesn't provide a separate title
+            title: title,
             description: postInfo.caption || null,
-            username: postInfo.owner_username || null,
+            username: username,
             category: mediaDetails.type || null,
             keywords: keywords,
             urls: {
@@ -75,31 +104,51 @@ function transformInstagramResponse(result, originalUrl) {
 }
 
 // Transform YouTube response to unified format
-function transformYouTubeResponse(result, originalUrl) {
+function transformYouTubeResponse(info, originalUrl) {
     const directUrls = [];
+    const videoDetails = info.videoDetails;
 
-    // YouTube metadata library doesn't provide direct download URLs
-    // We'll include the video URL if available
-    if (result.video_url) {
-        directUrls.push({
-            url: result.video_url,
-            quality: null,
-            format: "mp4",
-            type: "video"
-        });
+    // Include the video URL
+    directUrls.push({
+        url: originalUrl,
+        quality: null,
+        format: "mp4",
+        type: "video"
+    });
+
+    // Extract keywords from video details
+    const keywords = videoDetails.keywords || null;
+
+    // Get the best thumbnail (highest resolution is last in array)
+    const thumbnails = videoDetails.thumbnails || [];
+    const thumbnail = thumbnails.length > 0
+        ? thumbnails[thumbnails.length - 1].url
+        : null;
+
+    // Extract username - try multiple fields from author object
+    let username = null;
+    if (videoDetails.author && typeof videoDetails.author === 'object') {
+        username = videoDetails.author.name ||
+            videoDetails.author.user ||
+            videoDetails.author.channel_url ||
+            null;
+    }
+    // Fallback to ownerChannelName if author doesn't have the info
+    if (!username && videoDetails.ownerChannelName) {
+        username = videoDetails.ownerChannelName;
     }
 
     return {
         success: true,
         data: {
             platform: "youtube",
-            title: result.title || null,
-            description: result.description || null,
-            username: result.author || result.channel_name || null,
-            category: result.category || null,
-            keywords: result.keywords || null,
+            title: videoDetails.title || null,
+            description: videoDetails.description || null,
+            username: username,
+            category: videoDetails.category || null,
+            keywords: keywords,
             urls: {
-                thumbnail: result.thumbnail_url || null,
+                thumbnail: thumbnail,
                 original_url: originalUrl,
                 direct_urls: directUrls
             }
@@ -192,9 +241,13 @@ app.post('/metadata', async (req, res) => {
         // Check if it's a YouTube Short
         if (isYouTubeShort(url)) {
             console.log('Detected YouTube Short');
-            const result = await youtubeMeta(url);
-            console.log('YouTube result received:', result);
-            const unifiedResponse = transformYouTubeResponse(result, url);
+            const info = await ytdl.getInfo(url);
+            console.log('YouTube info received for:', info.videoDetails.title);
+            const unifiedResponse = transformYouTubeResponse(info, url);
+
+            // Cleanup debug files created by ytdl-core (non-blocking)
+            cleanupPlayerScripts().catch(() => { });
+
             return res.json(unifiedResponse);
         }
 
@@ -205,6 +258,10 @@ app.post('/metadata', async (req, res) => {
 
     } catch (error) {
         console.error('Error fetching metadata:', error);
+
+        // Cleanup debug files even on error (non-blocking)
+        cleanupPlayerScripts().catch(() => { });
+
         res.status(500).json({
             success: false,
             error: error.message
