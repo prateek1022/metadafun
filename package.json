@@ -10,10 +10,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
     "axios": "^1.13.4",
     "cheerio": "^1.2.0",
     "express": "^5.2.1",
-    "instagram-url-direct": "^2.0.7"
+    "instagram-url-direct": "^2.0.7",
+    "play-dl": "^1.9.7"
   }
 }

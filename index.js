@@ -1,6 +1,6 @@
 const express = require('express');
 const { instagramGetUrl } = require('instagram-url-direct');
-const ytdl = require('@distube/ytdl-core');
+const play = require('play-dl');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const fs = require('fs');
@@ -103,10 +103,10 @@ function transformInstagramResponse(result, originalUrl) {
     };
 }
 
-// Transform YouTube response to unified format
+// Transform YouTube response to unified format (play-dl)
 function transformYouTubeResponse(info, originalUrl) {
     const directUrls = [];
-    const videoDetails = info.videoDetails;
+    const videoDetails = info.video_details;
 
     // Include the video URL
     directUrls.push({
@@ -116,27 +116,17 @@ function transformYouTubeResponse(info, originalUrl) {
         type: "video"
     });
 
-    // Extract keywords from video details
-    const keywords = videoDetails.keywords || null;
+    // Extract keywords/tags
+    const keywords = videoDetails.tags || null;
 
-    // Get the best thumbnail (highest resolution is last in array)
+    // Get the best thumbnail
     const thumbnails = videoDetails.thumbnails || [];
     const thumbnail = thumbnails.length > 0
         ? thumbnails[thumbnails.length - 1].url
         : null;
 
-    // Extract username - try multiple fields from author object
-    let username = null;
-    if (videoDetails.author && typeof videoDetails.author === 'object') {
-        username = videoDetails.author.name ||
-            videoDetails.author.user ||
-            videoDetails.author.channel_url ||
-            null;
-    }
-    // Fallback to ownerChannelName if author doesn't have the info
-    if (!username && videoDetails.ownerChannelName) {
-        username = videoDetails.ownerChannelName;
-    }
+    // Extract username from channel
+    const username = videoDetails.channel?.name || null;
 
     return {
         success: true,
@@ -241,11 +231,11 @@ app.post('/metadata', async (req, res) => {
         // Check if it's a YouTube Short
         if (isYouTubeShort(url)) {
             console.log('Detected YouTube Short');
-            const info = await ytdl.getInfo(url);
-            console.log('YouTube info received for:', info.videoDetails.title);
+            const info = await play.video_basic_info(url);
+            console.log('YouTube info received for:', info.video_details.title);
             const unifiedResponse = transformYouTubeResponse(info, url);
 
-            // Cleanup debug files created by ytdl-core (non-blocking)
+            // Cleanup debug files (non-blocking) - play-dl may not create them
             cleanupPlayerScripts().catch(() => { });
 
             return res.json(unifiedResponse);
