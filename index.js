@@ -1,6 +1,8 @@
 const express = require('express');
 const { instagramGetUrl } = require('instagram-url-direct');
 const youtubeMeta = require('youtube-meta-data');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
 const PORT = 3000;
@@ -105,40 +107,68 @@ function transformYouTubeResponse(result, originalUrl) {
     };
 }
 
-app.post('/insta-metadata', async (req, res) => {
+// Fetch and parse metadata from generic URLs
+async function fetchGenericMetadata(url) {
     try {
-        const { url } = req.body;
-
-        if (!url) {
-            return res.status(400).json({
-                success: false,
-                error: 'URL is required'
-            });
-        }
-
-        // Validate that it's an Instagram Reel
-        if (!isInstagramReel(url)) {
-            return res.status(400).json({
-                success: false,
-                error: 'Only Instagram Reels are supported'
-            });
-        }
-
-        console.log('Fetching Instagram metadata for:', url);
-        const result = await instagramGetUrl(url);
-
-        const unifiedResponse = transformInstagramResponse(result, url);
-        res.json(unifiedResponse);
-    } catch (error) {
-        console.error('Error fetching Instagram metadata:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            },
+            timeout: 10000 // 10 second timeout
         });
-    }
-});
 
-app.post('/yt-metadata', async (req, res) => {
+        const $ = cheerio.load(response.data);
+
+        // Extract metadata from various sources
+        const title = $('meta[property="og:title"]').attr('content')
+            || $('meta[name="twitter:title"]').attr('content')
+            || $('title').text()
+            || null;
+
+        const description = $('meta[property="og:description"]').attr('content')
+            || $('meta[name="twitter:description"]').attr('content')
+            || $('meta[name="description"]').attr('content')
+            || null;
+
+        const thumbnail = $('meta[property="og:image"]').attr('content')
+            || $('meta[name="twitter:image"]').attr('content')
+            || null;
+
+        const siteName = $('meta[property="og:site_name"]').attr('content')
+            || null;
+
+        const type = $('meta[property="og:type"]').attr('content')
+            || null;
+
+        // Extract keywords if available
+        const keywordsContent = $('meta[name="keywords"]').attr('content');
+        const keywords = keywordsContent
+            ? keywordsContent.split(',').map(k => k.trim()).filter(k => k)
+            : null;
+
+        return {
+            success: true,
+            data: {
+                platform: "generic",
+                title: title,
+                description: description,
+                username: siteName,
+                category: type,
+                keywords: keywords,
+                urls: {
+                    thumbnail: thumbnail,
+                    original_url: url,
+                    direct_urls: []
+                }
+            }
+        };
+    } catch (error) {
+        throw new Error(`Failed to fetch metadata: ${error.message}`);
+    }
+}
+
+// Unified metadata endpoint
+app.post('/metadata', async (req, res) => {
     try {
         const { url } = req.body;
 
@@ -149,22 +179,32 @@ app.post('/yt-metadata', async (req, res) => {
             });
         }
 
-        // Validate that it's a YouTube Short
-        if (!isYouTubeShort(url)) {
-            return res.status(400).json({
-                success: false,
-                error: 'Only YouTube Shorts are supported'
-            });
+        console.log('Fetching metadata for:', url);
+
+        // Check if it's an Instagram Reel
+        if (isInstagramReel(url)) {
+            console.log('Detected Instagram Reel');
+            const result = await instagramGetUrl(url);
+            const unifiedResponse = transformInstagramResponse(result, url);
+            return res.json(unifiedResponse);
         }
 
-        console.log('Fetching YouTube metadata for:', url);
-        const result = await youtubeMeta(url);
-        console.log('YouTube result received:', result);
+        // Check if it's a YouTube Short
+        if (isYouTubeShort(url)) {
+            console.log('Detected YouTube Short');
+            const result = await youtubeMeta(url);
+            console.log('YouTube result received:', result);
+            const unifiedResponse = transformYouTubeResponse(result, url);
+            return res.json(unifiedResponse);
+        }
 
-        const unifiedResponse = transformYouTubeResponse(result, url);
-        res.json(unifiedResponse);
+        // Otherwise, treat it as a generic URL
+        console.log('Detected generic URL');
+        const genericResponse = await fetchGenericMetadata(url);
+        return res.json(genericResponse);
+
     } catch (error) {
-        console.error('Error fetching YouTube metadata:', error);
+        console.error('Error fetching metadata:', error);
         res.status(500).json({
             success: false,
             error: error.message
@@ -174,6 +214,5 @@ app.post('/yt-metadata', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
-    console.log(`Test endpoint: POST http://localhost:${PORT}/insta-metadata`);
-    console.log(`Test endpoint: POST http://localhost:${PORT}/yt-metadata`);
+    console.log(`Unified endpoint: POST http://localhost:${PORT}/metadata`);
 });
