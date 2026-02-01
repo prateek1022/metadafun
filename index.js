@@ -1,13 +1,21 @@
 const express = require('express');
 const { instagramGetUrl } = require('instagram-url-direct');
-const play = require('play-dl');
+const { google } = require('googleapis');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 
+
 const app = express();
 const PORT = 3000;
+
+// YouTube Data API v3 configuration
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+const youtube = google.youtube({
+    version: 'v3',
+    auth: YOUTUBE_API_KEY
+});
 
 app.use(express.json());
 
@@ -27,6 +35,23 @@ function isInstagramReel(url) {
 
 function isYouTubeShort(url) {
     return url.includes('/shorts/');
+}
+
+// Extract YouTube video ID from URL
+function extractYouTubeVideoId(url) {
+    const patterns = [
+        /(?:youtube\.com\/shorts\/)([^?&\/]+)/,
+        /(?:youtube\.com\/watch\?v=)([^&]+)/,
+        /(?:youtu\.be\/)([^?&\/]+)/
+    ];
+
+    for (const pattern of patterns) {
+        const match = url.match(pattern);
+        if (match && match[1]) {
+            return match[1];
+        }
+    }
+    return null;
 }
 
 // Cleanup function to remove ytdl-core debug files
@@ -103,10 +128,10 @@ function transformInstagramResponse(result, originalUrl) {
     };
 }
 
-// Transform YouTube response to unified format (play-dl)
-function transformYouTubeResponse(info, originalUrl) {
+// Transform YouTube response to unified format (YouTube Data API v3)
+function transformYouTubeResponse(videoData, originalUrl) {
     const directUrls = [];
-    const videoDetails = info.video_details;
+    const snippet = videoData.snippet;
 
     // Include the video URL
     directUrls.push({
@@ -117,25 +142,28 @@ function transformYouTubeResponse(info, originalUrl) {
     });
 
     // Extract keywords/tags
-    const keywords = videoDetails.tags || null;
+    const keywords = snippet.tags || null;
 
-    // Get the best thumbnail
-    const thumbnails = videoDetails.thumbnails || [];
-    const thumbnail = thumbnails.length > 0
-        ? thumbnails[thumbnails.length - 1].url
-        : null;
+    // Get the best thumbnail (maxres > standard > high > medium > default)
+    const thumbnails = snippet.thumbnails;
+    const thumbnail = thumbnails.maxres?.url ||
+        thumbnails.standard?.url ||
+        thumbnails.high?.url ||
+        thumbnails.medium?.url ||
+        thumbnails.default?.url ||
+        null;
 
-    // Extract username from channel
-    const username = videoDetails.channel?.name || null;
+    // Extract channel name
+    const username = snippet.channelTitle || null;
 
     return {
         success: true,
         data: {
             platform: "youtube",
-            title: videoDetails.title || null,
-            description: videoDetails.description || null,
+            title: snippet.title || null,
+            description: snippet.description || null,
             username: username,
-            category: videoDetails.category || null,
+            category: snippet.categoryId || null,
             keywords: keywords,
             urls: {
                 thumbnail: thumbnail,
@@ -231,12 +259,40 @@ app.post('/metadata', async (req, res) => {
         // Check if it's a YouTube Short
         if (isYouTubeShort(url)) {
             console.log('Detected YouTube Short');
-            const info = await play.video_basic_info(url);
-            console.log('YouTube info received for:', info.video_details.title);
-            const unifiedResponse = transformYouTubeResponse(info, url);
 
-            // Cleanup debug files (non-blocking) - play-dl may not create them
-            cleanupPlayerScripts().catch(() => { });
+            // Check if API key is configured
+            if (!YOUTUBE_API_KEY) {
+                return res.status(500).json({
+                    success: false,
+                    error: 'YouTube API key not configured. Please set YOUTUBE_API_KEY environment variable.'
+                });
+            }
+
+            // Extract video ID
+            const videoId = extractYouTubeVideoId(url);
+            if (!videoId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Invalid YouTube URL - could not extract video ID'
+                });
+            }
+
+            // Fetch video data from YouTube API
+            const response = await youtube.videos.list({
+                part: ['snippet'],
+                id: [videoId]
+            });
+
+            if (!response.data.items || response.data.items.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'YouTube video not found'
+                });
+            }
+
+            const videoData = response.data.items[0];
+            console.log('YouTube info received for:', videoData.snippet.title);
+            const unifiedResponse = transformYouTubeResponse(videoData, url);
 
             return res.json(unifiedResponse);
         }
